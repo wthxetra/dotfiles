@@ -1,0 +1,93 @@
+{
+  "layer": "top",
+  "margin-top": 5,
+  "margin-left": 5,
+  "margin-right": 5,
+  "modules-left": ["clock", "mpris"],
+  "modules-center": ["niri/workspaces"],
+  "modules-right": ["network#usb", "network#wifi", "network#pvpn", "wireplumber#sink", "wireplumber#source","battery"],
+
+  "clock": {
+    "format": "{:%H:%M}",
+    "tooltip-format": "<tt>{calendar}</tt>",
+    "calendar": {
+      "format": {
+        "today": "<span color='#ffcc66'><b>{}</b></span>"
+      }
+    }
+  },
+
+  "mpris": {
+    "format": "{player_icon} {title}",
+    "format-paused": "{status_icon} <i>{title}</i>",
+    "player-icons": {
+      "default": "▶",
+    },
+    "status-icons": {
+      "paused": ""
+    },
+    // "ignored-players": ["firefox"]
+  },
+
+  "network#usb": {
+    "interface": "enp0s*",
+    "format": " {ipaddr}",
+    "format-disconnected": "", //An empty format will hide the module.
+    "tooltip-format": " {ifname} : {ipaddr}",
+    "max-length": 50
+  },
+
+  "network#wifi": {
+    "interface": "wlo1",
+    "format": " {essid}",
+    "format-disconnected": "", //An empty format will hide the module.
+    "tooltip-format": " {essid} : {ipaddr}",
+    "max-length": 50
+  },
+
+  "network#pvpn": {
+    "interface": "pvpn",
+    "format": " VPN",
+    "format-disconnected": "", //An empty format will hide the module.
+    "tooltip-format": " ProtonVPN : {ipaddr}",
+    "max-length": 50
+  },
+
+  "wireplumber#sink": {
+    "format": "{icon} {volume}",
+    "format-muted": "",
+    "format-icons": ["", "", ""],
+    "on-click": "wiremix",
+    "on-click-right": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
+    "scroll-step": 5
+  },
+
+  "wireplumber#source": {
+      "node-type": "Audio/Source",
+      "format": " {volume}",
+      "format-muted": "",
+      "on-click-right": "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle",
+      "scroll-step": 5
+  },
+
+  "battery": {
+    "bat": "BAT1",
+    "interval": 60,
+    "states": {
+      "warning": 30,
+      "critical": 15
+    },
+    "events": {
+      "on-discharging-warning": "notify-send -u normal 'Low Battery'",
+      "on-discharging-critical": "notify-send -u critical 'Very Low Battery'",
+      "on-charging-100": "notify-send -u normal 'Battery Full!'",
+      "on-discharging": "notify-send -u normal 'Power Switch' Discharging",
+      "on-charging": "notify-send -u normal 'Power Switch' Charging'"
+    },
+    "format": "{icon} {capacity}",
+    "format-charging" : " {capacity}",
+    "format-full" : " {capacity}",
+    "format-icons": ["󰂎", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"],
+    "max-length": 25
+  }
+}

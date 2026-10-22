@@ -1,0 +1,349 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+# Paths
+BIN="$HOME/.local/bin/protonvpn-wg-confgen"
+USER_FILE="$HOME/.vpn/user"
+PASS_FILE="$HOME/.vpn/pass"
+
+FUZZEL_CONFIG="$HOME/.config/fuzzel/proton.ini"
+
+CACHE="/tmp/.proton-server"
+CONFIG_DIR="$HOME/.config/protonvpn-wg"
+CONFIG="$CONFIG_DIR/pvpn.conf"
+STATE="$CONFIG_DIR/current-server"
+
+for cmd in fuzzel curl jq sudo wg-quick wg ip mktemp; do
+    command -v "$cmd" >/dev/null 2>&1 || {
+        printf 'missing dependency: %s\n' "$cmd" >&2
+        exit 1
+    }
+done
+
+[[ -r "$USER_FILE" && -r "$PASS_FILE" ]] || {
+    echo "cant read $USER_FILE or $PASS_FILE" >&2
+    exit 1
+}
+
+USERNAME=$(<"$USER_FILE")
+
+[[ -n "$USERNAME" ]] || {
+    echo "username file is empty" >&2
+    exit 1
+}
+
+[[ -s "$PASS_FILE" ]] || {
+    echo "password file is empty" >&2
+    exit 1
+}
+
+[[ -f "$FUZZEL_CONFIG" && -r "$FUZZEL_CONFIG" ]] || {
+    echo "fuzzel config not found: $FUZZEL_CONFIG" >&2
+    exit 1
+}
+
+mkdir -p "$CONFIG_DIR"
+chmod 700 "$CONFIG_DIR"
+
+for path in "$CACHE" "$CONFIG" "$STATE"; do
+    [[ ! -L "$path" ]] || {
+        echo "Refusing symlink at $path" >&2
+        exit 1
+    }
+done
+
+menu() {
+    printf '%s\n' "$@" |
+        fuzzel --config="$FUZZEL_CONFIG" \
+            --dmenu --prompt='ProtonVPN > '
+}
+
+root_command() {
+    local password status
+
+    password=$(
+        printf '%s\n' "Enter root password:" |
+            fuzzel --config="$FUZZEL_CONFIG" \
+                --dmenu --prompt='Root Password > '
+    ) || return 1
+
+    [[ -n "$password" ]] || {
+        unset password
+        return 1
+    }
+
+    if printf '%s\n' "$password" |
+        sudo -S -p '' -- "$@"; then
+        status=0
+    else
+        status=$?
+    fi
+
+    unset password
+    return "$status"
+}
+
+is_connected() {
+    ip link show pvpn >/dev/null 2>&1
+}
+
+save_server() {
+    local server="$1"
+    local tmp
+
+    tmp=$(mktemp "$CONFIG_DIR/server.XXXXXX")
+    printf '%s\n' "$server" > "$tmp"
+    chmod 600 "$tmp"
+    mv -f -- "$tmp" "$STATE"
+}
+
+last_server() {
+    if [[ -f "$STATE" && -r "$STATE" ]]; then
+        head -n 1 "$STATE"
+    fi
+}
+
+refresh_servers() {
+    local tmp
+    tmp=$(mktemp /tmp/.proton-server.XXXXXX)
+    chmod 600 "$tmp"
+
+    echo "Fetching ProtonVPN free servers..." >&2
+
+    if "$BIN" \
+        --username "$USERNAME" \
+        --password-stdin \
+        --free-only \
+        --list-servers \
+        --p2p-only=false \
+        --json < "$PASS_FILE" > "$tmp" &&
+       jq -e 'type == "array" and length > 0' \
+           "$tmp" >/dev/null
+    then
+        mv -f -- "$tmp" "$CACHE"
+        chmod 600 "$CACHE"
+        echo "Server cache updated." >&2
+    else
+        rm -f -- "$tmp"
+        echo "Could not refresh servers; keeping existing cache." >&2
+        return 1
+    fi
+}
+
+ensure_servers() {
+    if [[ -f "$CACHE" ]] &&
+       jq -e 'type == "array" and length > 0' \
+           "$CACHE" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    refresh_servers
+}
+
+stop_current_connection() {
+    if is_connected; then
+        echo "Disconnecting current ProtonVPN interface..." >&2
+        root_command wg-quick down "$CONFIG" || return 1
+    fi
+}
+
+connect_server() {
+    local server="$1"
+    local saved tmp_config
+
+    saved=$(last_server || true)
+
+    # Reuse the existing config for the same server.
+    if [[ "$saved" == "$server" && -s "$CONFIG" ]]; then
+        if is_connected; then
+            menu \
+                "Already connected to $server" \
+                "Public IP & country" \
+                "Back" >/dev/null || true
+            return 0
+        fi
+
+        echo "Reusing saved config for $server..." >&2
+        root_command wg-quick up "$CONFIG"
+        return $?
+    fi
+
+    if is_connected; then
+        stop_current_connection || {
+            echo "Could not disconnect the current VPN." >&2
+            return 1
+        }
+    fi
+
+    tmp_config=$(mktemp "$CONFIG_DIR/pvpn.XXXXXX")
+    chmod 600 "$tmp_config"
+
+    echo "Generating config for $server..." >&2
+
+    if ! "$BIN" \
+        --username "$USERNAME" \
+        --password-stdin \
+        --free-only \
+        --server "$server" \
+        --output "$tmp_config" < "$PASS_FILE"; then
+        rm -f -- "$tmp_config"
+        echo "Config generation failed." >&2
+        return 1
+    fi
+
+    chmod 600 "$tmp_config"
+    mv -f -- "$tmp_config" "$CONFIG"
+
+    save_server "$server"
+
+    echo "Connecting to $server..." >&2
+    root_command wg-quick up "$CONFIG"
+}
+
+reconnect_last() {
+    local server
+
+    server=$(last_server || true)
+
+    if [[ -z "$server" || ! -s "$CONFIG" ]]; then
+        menu \
+            "No saved server config found" \
+            "Connect to server" \
+            "Back" >/dev/null || true
+        return 1
+    fi
+
+    if is_connected; then
+        menu "Already connected to $server" "Back" \
+            >/dev/null || true
+        return 0
+    fi
+
+    echo "Reconnecting to $server using saved config..." >&2
+    root_command wg-quick up "$CONFIG"
+}
+
+disconnect_vpn() {
+    if is_connected; then
+        root_command wg-quick down "$CONFIG"
+    else
+        menu "ProtonVPN is not connected" "Back" \
+            >/dev/null || true
+    fi
+}
+
+show_ip() {
+    local info ip city region country org timezone choice
+
+    if ! info=$(curl -fsS \
+        --connect-timeout 5 \
+        --max-time 12 \
+        https://ipinfo.io); then
+        choice=$(
+            menu \
+                "Could not fetch IP information" \
+                "Retry" \
+                "Back"
+        ) || return 0
+
+        case "$choice" in
+            "Retry") show_ip ;;
+        esac
+        return 0
+    fi
+
+    if ! jq -e '.ip and .country' >/dev/null <<< "$info"; then
+        menu "Invalid response from ipinfo.io" "Back" \
+            >/dev/null || true
+        return 1
+    fi
+
+    ip=$(jq -r '.ip // "Unknown"' <<< "$info")
+    country=$(jq -r '.country // "Unknown"' <<< "$info")
+    city=$(jq -r '.city // "Unknown"' <<< "$info")
+    region=$(jq -r '.region // "Unknown"' <<< "$info")
+    org=$(jq -r '.org // "Unknown"' <<< "$info")
+    timezone=$(jq -r '.timezone // "Unknown"' <<< "$info")
+
+    choice=$(
+        menu \
+            "Public IP: $ip" \
+            "Country: $country" \
+            "City: $city" \
+            "Region: $region" \
+            "ISP: $org" \
+            "Timezone: $timezone" \
+            "Refresh IP information" \
+            "Back"
+    ) || return 0
+
+    case "$choice" in
+        "Refresh IP information") show_ip ;;
+    esac
+}
+
+select_server() {
+    jq -r '
+        sort_by(.load, .score)[] |
+        [
+            .name,
+            .country,
+            (.city // "?"),
+            ((.load // 0 | tostring) + "% load")
+        ] | join(" | ")
+    ' "$CACHE" |
+        fuzzel --config="$FUZZEL_CONFIG" \
+            --dmenu --prompt='select server > '
+}
+
+while true; do
+    saved=$(last_server || true)
+    connected="Disconnected"
+
+    if is_connected; then
+        connected="Connected"
+    fi
+
+    choice=$(
+        menu \
+            "$connected | Last server: ${saved:-None}" \
+            "Reconnect last server" \
+            "Connect to server" \
+            "Disconnect VPN" \
+            "Current IP & country" \
+            "Refresh server list" \
+            "Exit"
+    ) || exit 0
+
+    case "$choice" in
+        "Reconnect last server")
+            reconnect_last || true
+            ;;
+        "Connect to server")
+            ensure_servers || continue
+
+            server=$(select_server) || continue
+            [[ -n "$server" ]] || continue
+
+            # Server name is before the first separator.
+            server="${server%% |*}"
+
+            connect_server "$server" || true
+            ;;
+        "Disconnect VPN")
+            disconnect_vpn || true
+            ;;
+        "Current IP & country")
+            show_ip || true
+            ;;
+        "Refresh server list")
+            refresh_servers || true
+            ;;
+        "Exit"|"")
+            exit 0
+            ;;
+        *)
+            ;;
+    esac
+done

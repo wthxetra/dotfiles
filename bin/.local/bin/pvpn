@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+CONFIG="$HOME/.vpn/pvpn.conf"
+USER_FILE="$HOME/.vpn/user"
+PASS_FILE="$HOME/.vpn/pass"
+INTERFACE="pvpn"
+CONFGEN="$HOME/.local/bin/protonvpn-wg-confgen"
+
+interface_up() {
+ip link show dev "$INTERFACE" &>/dev/null
+}
+
+generate_config() {
+[[ -f "$USER_FILE" && -f "$PASS_FILE" ]] || {
+echo "Error: Missing VPN credentials." >&2
+return 1
+}
+
+[[ -x "$CONFGEN" ]] || {
+echo "Error: Config generator not found: $CONFGEN" >&2
+return 1
+}
+
+mkdir -p "$(dirname "$CONFIG")"
+
+(
+cd "$(dirname "$CONFIG")"
+
+"$CONFGEN" \
+--username "$(cat "$USER_FILE")" \
+--password "$(cat "$PASS_FILE")" \
+--countries NL,JP,SG,DE,DE,CH \
+--duration 1d \
+--no-save \
+--device-name "$INTERFACE" \
+--output "$CONFIG" \
+--free-only
+)
+
+[[ -f "$CONFIG" ]] || {
+echo "Error: Generator did not create $CONFIG" >&2
+return 1
+}
+}
+
+start_vpn() {
+if [[ -f "$CONFIG" ]] && interface_up; then
+echo "VPN is already running. Skipping."
+elif [[ -f "$CONFIG" ]]; then
+echo "Starting VPN..."
+wg-quick up "$CONFIG"
+else
+echo "Generating VPN config..."
+generate_config
+wg-quick up "$CONFIG"
+fi
+}
+
+stop_vpn() {
+if interface_up; then
+echo "Stopping VPN..."
+wg-quick down "$CONFIG"
+else
+echo "VPN is already stopped."
+fi
+}
+
+reload_vpn() {
+echo "Generating new VPN config..."
+generate_config
+
+if interface_up; then
+echo "Restarting VPN..."
+wg-quick down "$CONFIG"
+else
+echo "VPN is not running."
+fi
+
+wg-quick up "$CONFIG"
+}
+
+case "${1:-}" in
+start) start_vpn ;;
+stop) stop_vpn ;;
+reload) reload_vpn ;;
+*)
+echo "Usage: $0 {start|stop|reload}" >&2
+exit 1
+;;
+esac

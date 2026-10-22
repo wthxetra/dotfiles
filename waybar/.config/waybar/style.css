@@ -1,0 +1,91 @@
+* {
+    border: none;
+    border-radius: 0;
+    font-family: "Lexend Deca", "CaskaydiaCove Nerd Font Propo", Helvetica, Arial, sans-serif;
+    font-size: 13px;
+    min-height: 0;
+}
+
+window#waybar {
+    background: rgba(0, 0, 0, 0.45);
+    color: rgba(255, 255, 255, 0.85);
+    border: 1px solid rgba(100, 100, 100, 0.5);
+    border-radius: 12px;
+}
+
+tooltip {
+    background: rgba(0, 0, 0, 0.65);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: rgba(255, 255, 255, 0.9);
+}
+
+tooltip label {
+    color: rgba(255, 255, 255, 0.9);
+}
+
+#workspaces {
+    margin: 4px 8px;
+    padding: 3px 5px;
+    background: rgba(255, 255, 255, 0.035);
+    border-radius: 16px;
+}
+
+#workspaces button {
+    padding: 0 12px;
+    margin: 0 3px;
+    min-width: 18px;
+    border-radius: 12px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.2);
+    transition: all 0.2s ease;
+}
+
+#workspaces button.active {
+    min-width: 36px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.15);
+    color: #ffffff;
+}
+
+#workspaces button:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+}
+
+#workspaces button.urgent {
+    background: rgba(255, 255, 255, 0.4);
+    color: #ffffff;
+}
+
+#clock,
+#mpris,
+#network,
+#wireplumber,
+#battery {
+    padding: 0 9px;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+#battery.charging {
+    color: #a1ffa1;
+}
+
+#battery.full {
+    color: #a1ffa1;
+}
+
+@keyframes blink {
+    to {
+        background-color: rgba(255, 255, 255, 0.4);
+        color: #000000;
+    }
+}
+
+#battery.warning:not(.charging) {
+    color: #ffffff;
+    animation-name: blink;
+    animation-duration: 0.5s;
+    animation-timing-function: steps(12);
+    animation-iteration-count: infinite;
+    animation-direction: alternate;
+}
